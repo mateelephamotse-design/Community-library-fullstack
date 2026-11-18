@@ -1,11 +1,19 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { NavLink, Navigate, Outlet, Route, Routes, useNavigate } from "react-router-dom";
+import {
+  NavLink,
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useNavigate
+} from "react-router-dom";
 import { api } from "./api";
 
 const AuthContext = createContext(null);
 
 export const useAuth = () => useContext(AuthContext);
 
+// Login page.
 function Login() {
   const [membershipId, setMembershipId] = useState("");
   const [password, setPassword] = useState("");
@@ -73,6 +81,7 @@ function Login() {
   );
 }
 
+// Main application layout.
 function Layout() {
   const { user, logout } = useAuth();
 
@@ -150,12 +159,14 @@ function Layout() {
   );
 }
 
+// Protect pages that require login.
 function Protected() {
   const { user } = useAuth();
 
   return user ? <Layout /> : <Navigate to="/login" replace />;
 }
 
+// Protect user management for administrators.
 function AdminRoute() {
   const { user } = useAuth();
 
@@ -164,6 +175,7 @@ function AdminRoute() {
     : <Navigate to="/" replace />;
 }
 
+// Dashboard.
 function Dashboard() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -192,9 +204,24 @@ function Dashboard() {
       {data && (
         <>
           <div className="stats-grid">
-            <Stat label="Book titles" value={data.titleCount} icon="▤" />
-            <Stat label="Total copies" value={data.copyCount} icon="▦" />
-            <Stat label="Registered users" value={data.userCount} icon="♙" />
+            <Stat
+              label="Book titles"
+              value={data.titleCount}
+              icon="▤"
+            />
+
+            <Stat
+              label="Total copies"
+              value={data.copyCount}
+              icon="▦"
+            />
+
+            <Stat
+              label="Registered users"
+              value={data.userCount}
+              icon="♙"
+            />
+
             <Stat
               label="Low-stock titles"
               value={data.lowStock.length}
@@ -227,18 +254,21 @@ function Dashboard() {
   );
 }
 
+// Dashboard statistic card.
 function Stat({ label, value, icon, warning }) {
   return (
     <div className="stat-card">
       <div className={`stat-icon ${warning ? "warn" : ""}`}>
         {icon}
       </div>
+
       <p>{label}</p>
       <strong>{value}</strong>
     </div>
   );
 }
 
+// Page heading.
 function PageHeading({ title, subtitle, children }) {
   return (
     <div className="page-heading">
@@ -253,11 +283,18 @@ function PageHeading({ title, subtitle, children }) {
   );
 }
 
+// Empty table message.
 function Empty({ text }) {
   return <div className="empty">{text}</div>;
 }
 
-function BookTable({ books, compact = false, onEdit, onDelete }) {
+// Reusable books table.
+function BookTable({
+  books,
+  compact = false,
+  onEdit,
+  onDelete
+}) {
   return (
     <div className="table-wrap">
       <table>
@@ -265,13 +302,16 @@ function BookTable({ books, compact = false, onEdit, onDelete }) {
           <tr>
             <th>BOOK</th>
             <th>AUTHOR</th>
+
             {!compact && (
               <>
                 <th>GENRE</th>
                 <th>ISBN</th>
               </>
             )}
+
             <th>IN STOCK</th>
+
             {!compact && <th>ACTIONS</th>}
           </tr>
         </thead>
@@ -322,6 +362,7 @@ function BookTable({ books, compact = false, onEdit, onDelete }) {
   );
 }
 
+// Book management page.
 function BooksPage() {
   const [books, setBooks] = useState([]);
 
@@ -556,36 +597,45 @@ function BooksPage() {
   );
 }
 
-// Transactions page
+// Transactions page.
 function TransactionsPage() {
+  const { user } = useAuth();
+
   const [books, setBooks] = useState([]);
+  const [members, setMembers] = useState([]);
   const [history, setHistory] = useState([]);
+
+  const [editingId, setEditingId] = useState(null);
 
   const [form, setForm] = useState({
     bookId: "",
     type: "borrow",
+    memberId: "",
     quantity: 1
   });
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // Load books, members and transaction history.
   async function load() {
     try {
-      const [b, t] = await Promise.all([
-        api("/books"),
-        api("/transactions")
-      ]);
+      const [bookRows, memberRows, transactionRows] =
+        await Promise.all([
+          api("/books"),
+          api("/members"),
+          api("/transactions")
+        ]);
 
-      setBooks(b);
-      setHistory(t);
+      setBooks(bookRows);
+      setMembers(memberRows);
+      setHistory(transactionRows);
 
-      if (!form.bookId && b.length) {
-        setForm(f => ({
-          ...f,
-          bookId: String(b[0].id)
-        }));
-      }
+      setForm(current => ({
+        ...current,
+        bookId: current.bookId ||
+          (bookRows.length ? String(bookRows[0].id) : "")
+      }));
 
     } catch (e) {
       setError(e.message);
@@ -596,37 +646,118 @@ function TransactionsPage() {
     load();
   }, []);
 
+  // Reset the transaction form.
+  function resetForm() {
+    setEditingId(null);
+
+    setForm({
+      bookId: books.length ? String(books[0].id) : "",
+      type: "borrow",
+      memberId: "",
+      quantity: 1
+    });
+  }
+
+  // Put a transaction into the form for editing.
+  function editTransaction(transaction) {
+    setEditingId(transaction.id);
+
+    setForm({
+      bookId: String(transaction.bookId),
+      type: transaction.type,
+      memberId: transaction.memberId
+        ? String(transaction.memberId)
+        : "",
+      quantity: transaction.quantity
+    });
+
+    setError("");
+    setSuccess("");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth"
+    });
+  }
+
+  // Save a new or edited transaction.
   async function submit(e) {
     e.preventDefault();
     setError("");
     setSuccess("");
 
     try {
-      const result = await api("/transactions", {
-        method: "POST",
-        body: JSON.stringify({
-          ...form,
-          quantity: Number(form.quantity),
-          bookId: Number(form.bookId)
-        })
-      });
+      const body = {
+        bookId: Number(form.bookId),
+        type: form.type,
+        quantity: Number(form.quantity),
+        memberId: form.type === "stock_in"
+          ? null
+          : Number(form.memberId)
+      };
 
-      setSuccess(
-        `Transaction saved. New stock: ${result.newStock} copies.`
+      const result = await api(
+        editingId
+          ? `/transactions/${editingId}`
+          : "/transactions",
+        {
+          method: editingId ? "PUT" : "POST",
+          body: JSON.stringify(body)
+        }
       );
 
-      load();
+      setSuccess(
+        `${editingId ? "Transaction updated" : "Transaction saved"}. New stock: ${result.newStock} copies.`
+      );
+
+      resetForm();
+      await load();
 
     } catch (e) {
       setError(e.message);
     }
   }
 
+  // Delete a transaction.
+  async function deleteTransaction(id) {
+    if (!confirm(
+      "Delete this transaction? The book stock will also be adjusted."
+    )) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+
+    try {
+      const result = await api(
+        `/transactions/${id}`,
+        { method: "DELETE" }
+      );
+
+      setSuccess(
+        `Transaction deleted. Updated stock: ${result.newStock} copies.`
+      );
+
+      if (editingId === id) {
+        resetForm();
+      }
+
+      await load();
+
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  const requiresMember =
+    form.type === "borrow" || form.type === "return";
+
   return (
     <>
       <PageHeading
         title="Transactions"
-        subtitle="Record new stock arrivals, book borrowing and returns."
+        subtitle="Record stock arrivals, borrowings and returns for individual library members."
       />
 
       {error && <div className="alert error">{error}</div>}
@@ -635,7 +766,7 @@ function TransactionsPage() {
       <div className="panel form-panel">
         <div className="panel-heading">
           <div>
-            <h2>New transaction</h2>
+            <h2>{editingId ? "Edit transaction" : "New transaction"}</h2>
             <p>Stock is updated automatically when you save.</p>
           </div>
         </div>
@@ -653,9 +784,9 @@ function TransactionsPage() {
                 })}
                 required
               >
-                {books.map(b => (
-                  <option key={b.id} value={b.id}>
-                    {b.title} ({b.quantity} available)
+                {books.map(book => (
+                  <option key={book.id} value={book.id}>
+                    {book.title} ({book.quantity} available)
                   </option>
                 ))}
               </select>
@@ -668,7 +799,10 @@ function TransactionsPage() {
                 value={form.type}
                 onChange={e => setForm({
                   ...form,
-                  type: e.target.value
+                  type: e.target.value,
+                  memberId: e.target.value === "stock_in"
+                    ? ""
+                    : form.memberId
                 })}
               >
                 <option value="borrow">
@@ -684,6 +818,35 @@ function TransactionsPage() {
                 </option>
               </select>
             </label>
+
+            {requiresMember && (
+              <label>
+                Library member
+
+                <select
+                  value={form.memberId}
+                  onChange={e => setForm({
+                    ...form,
+                    memberId: e.target.value
+                  })}
+                  required
+                >
+                  <option value="">Select the member</option>
+
+                  {members.map(member => (
+                    <option key={member.id} value={member.id}>
+                      {member.name} ({member.membershipId})
+                    </option>
+                  ))}
+                </select>
+
+                {!members.length && (
+                  <span className="muted">
+                    Add a user with the Member role in User Management first.
+                  </span>
+                )}
+              </label>
+            )}
 
             <label>
               Quantity
@@ -701,9 +864,24 @@ function TransactionsPage() {
             </label>
 
             <div className="form-actions">
-              <button className="primary">
-                Save transaction
+              <button
+                className="primary"
+                disabled={requiresMember && !members.length}
+              >
+                {editingId
+                  ? "Save transaction changes"
+                  : "Save transaction"}
               </button>
+
+              {editingId && (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={resetForm}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </form>
         ) : (
@@ -726,36 +904,71 @@ function TransactionsPage() {
                 <tr>
                   <th>BOOK</th>
                   <th>TYPE</th>
+                  <th>MEMBER</th>
                   <th>QUANTITY</th>
                   <th>RECORDED BY</th>
                   <th>DATE</th>
+
+                  {user.role === "admin" && <th>ACTIONS</th>}
                 </tr>
               </thead>
 
               <tbody>
-                {history.map(t => (
-                  <tr key={t.id}>
+                {history.map(transaction => (
+                  <tr key={transaction.id}>
                     <td>
-                      <strong>{t.bookTitle}</strong>
+                      <strong>{transaction.bookTitle}</strong>
                     </td>
 
                     <td>
                       <span
                         className={`type-pill ${
-                          t.type === "return" ? "stock_in" : t.type
+                          transaction.type === "return"
+                            ? "stock_in"
+                            : transaction.type
                         }`}
                       >
-                        {t.type === "borrow"
+                        {transaction.type === "borrow"
                           ? "Borrowed"
-                          : t.type === "return"
+                          : transaction.type === "return"
                             ? "Returned"
                             : "Stock added"}
                       </span>
                     </td>
 
-                    <td>{t.quantity}</td>
-                    <td>{t.userName}</td>
-                    <td>{new Date(t.createdAt).toLocaleString()}</td>
+                    <td>
+                      {transaction.type === "stock_in"
+                        ? "—"
+                        : transaction.memberName
+                          ? `${transaction.memberName} (${transaction.memberMembershipId})`
+                          : "Not linked – edit to assign member"}
+                    </td>
+
+                    <td>{transaction.quantity}</td>
+                    <td>{transaction.userName}</td>
+                    <td>
+                      {new Date(transaction.createdAt).toLocaleString()}
+                    </td>
+
+                    {user.role === "admin" && (
+                      <td>
+                        <div className="actions">
+                          <button
+                            className="text-button"
+                            onClick={() => editTransaction(transaction)}
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            className="text-button danger-text"
+                            onClick={() => deleteTransaction(transaction.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -769,6 +982,7 @@ function TransactionsPage() {
   );
 }
 
+// User management page.
 function UsersPage() {
   const [users, setUsers] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -891,6 +1105,7 @@ function UsersPage() {
         <form className="form-grid" onSubmit={submit}>
           <label>
             Full name
+
             <input
               value={form.name}
               onChange={e => setForm({
@@ -903,6 +1118,7 @@ function UsersPage() {
 
           <label>
             Membership ID
+
             <input
               value={form.membershipId}
               onChange={e => setForm({
@@ -1032,6 +1248,7 @@ function UsersPage() {
   );
 }
 
+// Main application.
 export default function App() {
   const [user, setUser] = useState(() => {
     try {
